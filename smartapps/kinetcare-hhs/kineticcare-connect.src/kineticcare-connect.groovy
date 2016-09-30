@@ -17,7 +17,7 @@
  */
  
 definition(
-	name: "KineticCare (Connect)",
+	name: "KineticCare (connect) ",
 	namespace: "kinetcare.hhs",
 	author: "KineticCare, LLC",
 	description: "Allows you to attach to a KineticCare Home Health Station and integrate it with your SmartThings home automation products",
@@ -30,63 +30,211 @@ definition(
 preferences {
 	page(name:"mainPage", title:"Hue Device Setup", content:"mainPage", refreshTimeout:5)
 	page(name:"hhsDiscovery", title:"Hue Bridge Discovery", content:"hhsDiscovery", refreshTimeout:5)
-	page(name:"hhsAdded", title:"Added Home Health Station", content:"hhsAdded", refreshTimeout:5)
+	page(name:"hhsAdded", title:"Configure", content:"hhsAdded")
+	page(name:"medicationsPage", title:"Configure Medications", content:"medicationsPage")
+	page(name:"alertsPage", title:"Configure Alerts", content:"alertsPage")
+    page(name:"clearAllHHSPage", title:"Clear All HHS", content:"clearAllHHSPage")
+	page(name:"appointmentsPage", title:"Configure Appoitnment", content:"appointmentsPage")
+	page(name:"page1", title:"Meds", content:"page1")
+	page(name:"page2", title:"Life Warning", content:"page2")
+	page(name:"page3", title:"Life Alert", content:"page3")
 }
 
 def mainPage() {
+	log.debug "App Starting"
     def bridges = bridgesDiscovered()
-    if (state.username && bridges) {
+    def bridgeCount = getHueBridges().size()
+ //   if (bridgeCount > 0) {
         return hhsAdded()
-    } else {
-        return hhsDiscovery()
-    }
+   // } else {
+     //   return hhsDiscovery()
+   // }
 }
 
-def hhsDiscovery(params=[:])
-{
+private discoverBridges() {
+	sendHubCommand(new physicalgraph.device.HubAction("lan discovery urn:schemas-upnp-org:device:basic:1", physicalgraph.device.Protocol.LAN))
+}
+
+def hhsDiscovery(params=[:]){
+	log.debug "App Discovery 2"
+    alertTriggerButton = []
+    def devices = getAllChildDevices();
+    devices.each {
+    	log.debug it.id
+ //   	deleteChildDevice(it)
+    }
+    
 	def bridges = bridgesDiscovered()
 	int bridgeRefreshCount = !state.bridgeRefreshCount ? 0 : state.bridgeRefreshCount as int
 	state.bridgeRefreshCount = bridgeRefreshCount + 1
 	def refreshInterval = 3
 
 	def options = bridges ?: []
-	def numFound = options.size() ?: 0
+	def numVerified = options.size() ?: 0
 
-	if (numFound == 0 && state.bridgeRefreshCount > 25) {
-    	log.trace "Cleaning old bridges memory"
-    	state.bridges = [:]
-        state.bridgeRefreshCount = 0
-        app.updateSetting("selectedHue", "")
-    }    
+	def potentialFound = getHueBridges().size()
+    
+    subscribe(location, null, locationHandler, [filterEvents:false])
 
-	subscribe(location, null, locationHandler, [filterEvents:false])
-
-	//bridge discovery request every 15 //25 seconds
-	if((bridgeRefreshCount % 5) == 0) {
-		discoverBridges()
-	}
-
-	//setup.xml request every 3 seconds except on discoveries
-	if(((bridgeRefreshCount % 1) == 0) && ((bridgeRefreshCount % 5) != 0)) {
-		verifyHueBridges()
-	}
+	discoverBridges()
+	verifyHueBridges()
 
 	return dynamicPage(name:"hhsDiscovery", title:"Discovery Started!", nextPage:"hhsAdded", refreshInterval:refreshInterval, uninstall: true) {
-		section("Please wait while we discover your Home Health Station. Discovery can take five minutes or more! Select your device below once discovered.") {
-			input "selectedHue", "enum", required:false, title:"Select Hue Bridge (${numFound} found)", multiple:false, options:options
+		section("Please wait while we discover your Home Health Station. Discovery can take five minutes or more! Select your device below once discovered.") {        
+        	paragraph "Potential ${potentialFound} Verified: ${numVerified}"
+			input "selectedHue", "enum", required:false, title:"Select HHS (${numVerified} found)", multiple:false, options:options
 		}
+        section("Options") {
+        	href(name:"href", title:"Clear HHS", required: false, page: "clearAllHHSPage");
+        }
 	}
 }
 
-def hhsAdded(params=[:]){
-	return dynamicPage(name:"hhsAdded", title:"Home Health Station Added", nextPage:"", refreshInterval:refreshInterval, install:true, uninstall: true) {
-		section("Congratulations, your Home Health Station has been Added.") 
-	}
+def hhsAdded(){
+	return dynamicPage(name:"hhsAdded", title:"Home Health Station Added", nextPage:"", install:true, uninstall: true) {
+		section("Configure Alerts.") {
+        	href(name:"href", title:"Medication Reminders",style:"page",  page: "medicationsPage");
+        }
+        section("Configure Alerts.") {
+            href(name:"href", title:"Alerts",style:"page",  page: "alertsPage");
+        }
+        
+        section("Configure Alerts.") {
+            href(name:"href", title:"Add Another Home Helth Station",style:"page",  page: "hhsDiscovery");
+        }
+	    section("Configure Alerts.") {
+        	href(name:"href", title:"Appointment Reminders", style:"page", page: "appointmentsPage");
+       		href(name:"href", title:"Meds", style:"page", page: "page1");
+       		href(name:"href", title:"Life Warning", style:"page", page: "page2");
+       		href(name:"href", title:"Life Alert", style:"page", page: "page3");
+        }
+    }
+}
+
+def clearAllHHSPage() {
+	log.debug "Clear All"
+
+    state.bridges = []
+    state.brdigeRefreshCount = 0
+
+  	def allDevices = getAllChildDevices()
+    allDevices.each{
+    	log.debug "Remove device ${it.deviceNetworkId}"
+        try{
+       		deleteChildDevice(it.deviceNetworkId)
+        }
+        catch(e) {
+        	log.debug(e)
+        }
+    }
+    
+   	return dynamicPage(name:"hhsAdded", title:"Home Health Station Added", nextPage:"", install:false, uninstall: false) {
+		section("State Removed.") {
+			paragraph("State has been Removed, please re-find your hubs.")
+		}
+     }
+}
+
+def medicationsPage() {
+	return dynamicPage(name:"medicationsPage", title:"Medications", nextPage:"", install:false, uninstall: false) {
+    	section("Trigger") {
+			input "medsReminderTriggerButton", "capability.button", title: "What button press should trigger an alert?", required: false, multiple:true
+	   	}
+    	section("Reminder") {
+        	paragraph("How should you be reminded?")
+            
+            
+    			input "hues", "capability.colorControl", title: "Which Bulbs?", required:false, multiple:true
+    			input "medsReminderHues", "capability.colorControl", title: "Which Bulbs?", required:false, multiple:true
+				input "medsReminderColor", "enum", title: "Hue Color?", required: false, multiple:false, options: 
+						["Red","Green","Blue","Yellow","Orange","Purple","Pink"]
+				input "medsReminderSpeakers", "capability.musicPlayer", title: "Which Speakers?", required:false, multiple:true
+				input "medsReminderVolume", "number", title: "Set the volume volume", description: "0-100%", required: false, defaultValue: 100
+                input "medsReminderUseDefault", "bool", title: "Use Default Message", required:false, multiple:false, defaultValue:true
+				input "medsReminderMessage", "phrase", title: "Say what message", required:false, multiple:false
+       			input "medsReminderCount", "number", title: "How may times to remind?", required: false, defaultValue: 2
+       			input "medsReminderInterval", "number", title: "Interval (sec.) between reminder", required:false, defaultValue: 5
+       }
+       section("Clearing") {
+			paragraph("How do you want to notify that you medication has been taken?")
+			input "medicationContactClearReminder", "capability.contactSensor", title: "Open/Close", required:false, multiple:true
+    		input "medicationButtonClearReminder", "capability.button", title: "Button", required:false, multiple:false
+       }
+       section("Notification") {
+        	paragraph("Who/how should be notified if medications are not taken?")
+        	input "medsTextNumber", "number", title: "Phone Number to Notify?", required: false, multiple:false
+       		input "medsTextMessage", "phrase", title: "Send what message", required: false, multiple:false
+	   }
+    }
+}
+
+def alertsPage(){
+  	return dynamicPage(name:"alertsPage", title:"Alerts", nextPage:"", install:false, uninstall: false) {
+    	section("Trigger") {
+	   		input "alertWarningTriggerButton", "capability.button", title: "What button press should trigger an alert with alert only?", required: false, multiple:true
+	   		input "alertTriggerButton", "capability.button", title: "What button press should trigger an alert?", required:false, multiple:true
+	   		input "alertTriggerContactSensor", "capability.contactSensor", title: "What contact open should trigger alert?", required: false, multiple:true
+	    }
+		section("Warning") {
+        	paragraph("How should you be warned prior to notify first responders?")
+       			input "alertWarningHues", "capability.colorControl", title: "Which Bulbs?", required:false, multiple:true
+				input "alertWarningColor", "enum", title: "Hue Color?", required: false, multiple:false, options:  ["Red","Green","Blue","Yellow","Orange","Purple","Pink"]
+				input "alertWarningSpeakers", "capability.switch", title: "Which Speakers?", required:false, multiple:true
+				input "alertWarningVolume", "number", title: "Set the volume volume", description: "0-100%", required: false, defaultValue: 100
+            	input "alertWarningUseDefault", "bool", title: "Use Default Message", required:false, multiple:false, defaultValue:true
+				input "alertWarningMessage", "phrase", title: "Say what message", required:false, multiple:false
+       			input "alertWarningCount", "number", title: "How may times to warn?", required: false, defaultValue: 4
+       			input "alertWarningInterval", "number", title: "Interval (sec.) between reminder", required: false, defaultValue: 5
+        }
+    	section("Clearing") {
+   			input "alertWarningClear", "capability.button", title: "Clear Warning", required:false, multiple:true
+        }
+        section("Notification") {
+    		input "alertNotifyAlarm", "capability.switch", title: "Which Alarm?", description: "0-100%", required: false
+			input "speaker", "capability.switch", title: "Which Alarm?", description: "0-100%", required: false
+			input "alertNotifAlarm", "capability.switch", title: "Which Alarm?", description: "0-100%", required: false
+	    	input "alertNotifyOnLights", "capability.switch", title: "Turn On Which Lights?", required: false, multiple:true
+	    	input "alertNotifyFlashLights", "capability.switch", title: "Flash Which Lights?", required: false, multiple:true
+            input "alertNotifyUnlockDoors", "capability.lock", title: "Unlock Which Door?", required: false, multiple:true            
+	    	input "alertNotifTextNumber", "number", title: "Phone Number to Notify?", required: false, multiple:true
+            input "alertNotifTextMessage", "string", title: "Message To Send", required: false, multiple:false
+	    	input "alertNotifyClear", "capability.button", title: "How to Clear?", required: false, multiple:true
+	    }
+    }
 }
 
 
-private discoverBridges() {
-	sendHubCommand(new physicalgraph.device.HubAction("lan discovery urn:schemas-upnp-org:device:basic:1", physicalgraph.device.Protocol.LAN))
+def page1() {
+  	startMedsReminderAlert()
+      
+  	return dynamicPage(name:"page1", title:"Meds Warning", nextPage:"", install:false, uninstall: false) { }
+}
+
+def page2() {
+	alert911HandlerWarning1()
+
+  	return dynamicPage(name:"page2", title:"Safe Warning", nextPage:"", install:false, uninstall: false) { }
+}
+
+
+def page3() {
+	alert911HandlerWarning2()
+
+  	return dynamicPage(name:"page2", title:"Bad Warning", nextPage:"", install:false, uninstall: false) { }
+}
+
+def appointmentsPage() {
+  	return dynamicPage(name:"appointmentsPage", title:"Appointments", nextPage:"", install:false, uninstall: false) {
+    	section("Reminder") {
+        	paragraph("How should you be reminded.")
+ 	    }
+    	section("Clearing") {
+ 			paragraph("What should be used to clear the reminder.")
+      	}
+ 		section("Notification") {
+        	paragraph("Who should bed notified.")
+        }
+    }
 }
 
 private sendDeveloperReq() {
@@ -101,8 +249,9 @@ private sendDeveloperReq() {
 		body: [devicetype: "$token-0", username: "$token-0"]], "${selectedHue}"))
 }
 
-
 private verifyHueBridge(String deviceNetworkId, String host) {
+	log.debug "Sending meta data request to $host"
+
 		sendHubCommand(new physicalgraph.device.HubAction([
 		method: "GET",
 		path: "/xml/props.xml",
@@ -112,7 +261,10 @@ private verifyHueBridge(String deviceNetworkId, String host) {
 }
 
 private verifyHueBridges() {
+	
 	def devices = getHueBridges().findAll { it?.value?.verified != true }
+    def deviceCount = devices.size()
+    
 	devices.each {
         def ip = convertHexToIP(it.value.networkAddress)
         def port = convertHexToInt(it.value.deviceAddress)
@@ -154,6 +306,7 @@ def updated() {
 def initialize() {
 	log.debug "Initializing"  
     unsubscribe(bridge)
+    subscribeToEvents()
     state.inBulbDiscovery = false
     state.bridgeRefreshCount = 0
     state.bulbRefreshCount = 0
@@ -163,6 +316,362 @@ def initialize() {
         doDeviceSync()
         runEvery5Minutes("doDeviceSync")
 	}
+}
+
+def subscribeToEvents() {
+	log.debug("SUBSCRIBING")
+
+	unsubscribe()
+    def hhsList = getChildDevices()
+    hhsList.each {    
+    	log.debug "Added alert handler ${it.deviceNetworkId}"
+    	subscribe(it, "button", hhsButtonHandler)
+    }
+    
+    subscribe(medsReminderTriggerButton, "button", medsReminderButtonHandler)
+    subscribe(alertWarningTriggerButton, "button", medsReminderButtonHandler)
+    subscribe(alertTriggerButton, "button", medsReminderButtonHandler)
+}
+
+def medsReminderButtonHandler(evt) {
+	log.debug "Received Name ${evt.name}"
+    log.debug "Received Data ${evt.data}"
+	log.debug "Received Event Type ${evt.value}"
+    
+   	def body = new groovy.json.JsonSlurper().parseText(evt.data)
+      
+    log.debug "Received Data ${body.buttonNumber}"
+    
+    switch(body.buttonNumber) {
+ 		case 1:
+        	startMedsReminderAlert()
+        	break;
+        case 2:
+        	alert911HandlerWarning1()
+        	break;
+        case 3:
+        	alert911HandlerWarning2()
+        	break;
+        case 4:
+        	//alertNotifyOnLights.on()
+         	alertNotifyOnLights.off()
+            medsReminderHues.off()
+            alertNotifyAlarm.off()
+          //  alertNotifyUnlockDoors.lock()
+            break;
+ 	}
+}
+
+def hhsButtonHandler(evt) {
+	log.debug "Received Name ${evt.name}"
+    log.debug "Received Data ${evt.data}"
+	log.debug "Received Event Type ${evt.value}"
+    
+    switch(evt.data) {
+    	case "911alert" :
+        	alert911HandlerWarning2()
+        	break;
+
+    	case "meds" :
+        	startMedsReminderAlert()
+        	break;
+            
+    	case "needHelp" :
+        
+        	break;
+            
+        case "vitals" : 
+        	
+            break;
+            
+        case "cleared" : 
+        	clearCondition()
+        	break;
+    }
+}	
+
+meds
+
+def startVitalsReminder() {
+	log.debug "Received Name ${evt.name}"
+    log.debug "Received Data ${evt.data}"
+	log.debug "Received Event Type ${evt.value}"
+}
+
+def startMedsReminderAlert() {
+	log.debug "Starting Meds Reminder Process "
+    
+    state.flashMedsReminderCount = 0
+	setHuesColor(medsReminderHues, medsReminderColor)
+	state.medsAlertReminder = 'active'
+    medsReminderHues.on()
+    runIn(1, medsReminderFlash)
+    
+    if(medsReminderSpeakers.size() == 0){
+    	log.debug "No Speakers, can not play reminder."
+    }
+    else if(medsReminderUseDefault) {
+    	log.debug "Playing Default Sound"
+    	def sound = [uri: "http://kineticcare.blob.core.windows.net/audio/Pills.mp3", duration: "8"]
+        medsReminderSpeakers.playTrackAndResume(sound.uri, sound.duration, 100)
+    }
+    else {	
+    	def sound = textToSpeech(medsReminderMessage)
+        log.debug "Playing The Message Message ${sound.duration}"
+    	medsReminderSpeakers.playTrackAndResume(sound.uri, sound.duration, 100)
+    }
+}
+
+def medsReminderAlert() {
+	if(state.medsAlertReminder == 'active') {
+
+
+	}
+}
+
+def triggerMedsNotification() {
+    if(state.medsAlertReminder == 'active') {        
+        medsTextNumber.each {
+            sendSms(it, medsTextMessage)
+        }        
+        state.medsAlertReminder = 'cleared'
+    }
+}
+
+def medsReminderFlash() {
+	def count = 10
+    log.debug("flash")
+
+	while(count > 0){
+        if(state.medsAlertReminder == 'active') {	
+            state.flashMedsReminderOn = !state.flashMedsReminderOn
+            if(state.flashMedsReminderOn) {
+                log.debug("flash - on")
+                medsReminderHues.off()
+            }
+            else {
+                log.debug("flash - of")
+                medsReminderHues.on()
+            }
+
+            state.flashMedsReminderCount = state.flashMedsReminderCount + 1
+
+            pause(1000)                       
+            count = count - 1
+        }
+        else {
+        	count = 0
+            medsReminderHues.off()
+        }
+    }
+    
+    medsReminderHues.off()
+    
+	runIn(1, triggerMedsNotification)
+}
+
+def medsTaken() {
+	state.medsAlertReminder = 'cleared'
+}
+
+def medsNotTakenHandler() {
+
+}
+
+/* Note 911 doesn't really mean phone 911, but used as a emergency scenario */
+def alert911HandlerWarning1() {
+	setHuesColor(alertWarningHues, alertWarningColor) 
+    alertNotifyFlashLights.on()
+    state.flashAlertNotifyCount = 0
+    state.flashAlertNotifyOn = true
+    
+    state.alert911 = 'active'
+    
+     if(alertWarningSpeakers.size() == 0){
+    	log.debug "No Speakers, can not play reminder."
+    }
+    else if(alertWarningUseDefault) {
+    	log.debug "Playing default alert sound"
+    	def sound = [uri: "http://kineticcare.blob.core.windows.net/audio/Alright.mp3", duration: "5"]
+        alertWarningSpeakers.playTrackAndResume(sound.uri, sound.duration, 100)
+        log.debug "Played alert sound"
+    }
+    else {	
+    	def sound = textToSpeech(alertWarningMessage)
+        log.debug "Playing The Message Message ${sound.duration}"
+    	alertWarningSpeakers.playTrackAndResume(sound.uri, sound.duration, 100)
+    }
+    
+    flashAlertNotifyLight1()    
+}
+
+def alert911HandlerWarning2() {
+	setHuesColor(alertWarningHues, alertWarningColor) 
+    alertNotifyFlashLights.on()
+    state.flashAlertNotifyCount = 0
+    state.flashAlertNotifyOn = true
+    
+    state.alert911 = 'active'
+    
+     if(alertWarningSpeakers.size() == 0){
+    	log.debug "No Speakers, can not play reminder."
+    }
+    else if(alertWarningUseDefault) {
+    	log.debug "Playing default alert sound"
+    	def sound = [uri: "http://kineticcare.blob.core.windows.net/audio/Alright.mp3", duration: "5"]
+        alertWarningSpeakers.playTrackAndResume(sound.uri, sound.duration, 100)
+        log.debug "Played alert sound"
+    }
+    else {	
+    	def sound = textToSpeech(alertWarningMessage)
+        log.debug "Playing The Message Message ${sound.duration}"
+    	alertWarningSpeakers.playTrackAndResume(sound.uri, sound.duration, 100)
+    }
+    
+    flashAlertNotifyLight2()    
+}
+
+def clearCondition() {
+	log.debug "Clearing "
+    state.medsAlertReminder = 'cleared'
+    state.alert911 = 'cleared'
+    medsReminderHues.off()
+    alertNotifyFlashLights.off()
+	alertNotifyAlarm.off()
+}
+
+def alert911Notification() {
+
+}
+
+def shutOffAlarm() {
+	log.debug("Shutting Off Alarm")
+	alertNotifAlarm.off()
+//    alertNotifyOnLights.off()
+//    alertNotifyUnlockDoors.lock()
+}
+
+def triggerAlarm() {
+ 	if(state.alert911 == 'active') {
+    	log.debug("Triggering Alarm State")
+        alertWarningHues.on()
+       	alertNotifyAlarm.both()
+        alertNotifyUnlockDoors.unlock()
+        alertNotifyOnLights.on()
+    
+        alertNotifTextNumber.each {
+            sendSms(it, alertNotifTextMessage)
+        }
+
+		pause(1500)
+        shutOffAlarm()
+    }
+}
+
+def flashAlertNotifyLight1() {
+	log.debug('notify light')
+    
+    def count = 6
+    while(count > 0){	
+        if(state.alert911 == 'active') {
+            state.flashAlertNotifyOn = !state.flashAlertNotifyOn
+
+            if(state.flashAlertNotifyOn){
+                log.debug('notify light - off')
+                alertWarningHues.off()            
+            }
+            else {
+                log.debug('notify light - on')
+                alertWarningHues.on()
+                state.flashAlertNotifyCount = state.flashAlertNotifyCount + 1
+            }
+            count = count - 1
+            pause(1000)
+        }
+        else {
+        	count = 0
+        }        
+    }
+    
+   // if(state.alert911 == 'active') 
+    //	runIn(1, triggerAlarm)
+}
+
+def flashAlertNotifyLight2() {
+	log.debug('notify light')
+    
+    def count = 4
+    while(count > 0){	
+        if(state.alert911 == 'active') {
+            state.flashAlertNotifyOn = !state.flashAlertNotifyOn
+
+            if(state.flashAlertNotifyOn){
+                log.debug('notify light - off')
+                alertWarningHues.off()            
+            }
+            else {
+                log.debug('notify light - on')
+                alertWarningHues.on()
+                state.flashAlertNotifyCount = state.flashAlertNotifyCount + 1
+            }
+            count = count - 1
+            pause(1000)
+        }
+        else {
+        	count = 0
+        }        
+    }
+    
+    if(state.alert911 == 'active') 
+    	runIn(1, triggerAlarm)
+}
+	
+def setHuesColor(hues, color) {
+	def hueColor = 0
+	def saturation = 100
+
+	switch(color) {
+		case "White":
+			hueColor = 52
+			saturation = 19
+			break;
+		case "Daylight":
+			hueColor = 53
+			saturation = 91
+			break;
+		case "Soft White":
+			hueColor = 23
+			saturation = 56
+			break;
+		case "Warm White":
+			hueColor = 20
+			saturation = 80 //83
+			break;
+		case "Blue":
+			hueColor = 70
+			break;
+		case "Green":
+			hueColor = 39
+			break;
+		case "Yellow":
+			hueColor = 25
+			break;
+		case "Orange":
+			hueColor = 10
+			break;
+		case "Purple":
+			hueColor = 75
+			break;
+		case "Pink":
+			hueColor = 83
+			break;
+		case "Red":
+			hueColor = 100
+			break;
+	}
+    
+    def newValue = [hue: hueColor, saturation: saturation, level: 100]
+    hues*.setColor(newValue)
 }
 
 def manualRefresh() {
@@ -223,34 +732,47 @@ def addBridge() {
 	}
 }
 
-def locationHandler(evt) {
+private subscribeToHHS(){
+  
+}
+def locationHandler(evt) { }
+/*
 	def description = evt.description
-    log.trace "Location: $description"
-
+   
 	def hub = evt?.hubId
  	def parsedEvent = parseLanMessage(description)
-	parsedEvent << ["hub":hub]
+	log.debug parsedEvent;
+    return;
+    
+    parsedEvent << ["hub":hub]
+    
+    def ip = convertHexToIP(parsedEvent.networkAddress)
+    def port = -1
+    if(parsedEvent.deviceAddress)
+    	port = convertHexToInt(parsedEvent.deviceAddress)
+    else
+    	port = convertHexToInt(parsedEvent.port)
+    
+    def host = ip + ":" + port
+
+	log.trace "HTTP Response From Device -> $ip - $port"
 
 	if (parsedEvent?.ssdpTerm?.contains("urn:schemas-upnp-org:device:Basic:1")) {
     	//SSDP DISCOVERY EVENTS
-		log.trace "SSDP DISCOVERY EVENTS"
+		log.trace "SSDP DISCOVERY EVENTS ${parsedEvent.ssdpUSN.toString()}"
 		def bridges = getHueBridges()
-		log.trace bridges.toString()
 		if (!(bridges."${parsedEvent.ssdpUSN.toString()}")) {
         	//bridge does not exist 
 			log.trace ">>>>>>>Adding bridge ${parsedEvent.ssdpUSN}"
 			bridges << ["${parsedEvent.ssdpUSN.toString()}":parsedEvent]
 		} else {
 			// update the values
-            def ip = convertHexToIP(parsedEvent.networkAddress)
-            def port = convertHexToInt(parsedEvent.deviceAddress)
-            def host = ip + ":" + port
-			log.debug "Device ($parsedEvent.mac) was already found in state with ip = $host."
-            
-                             
-            sendHubCommand(new physicalgraph.device.HubAction([
+            def countBridges = bridges.size()
+			log.debug "Device ($parsedEvent.mac) already exists in bridge ip = $host total brdiges $countBridges"
+            def hubId = evt?.hubId;
+          	sendHubCommand(new physicalgraph.device.HubAction([
                 method: "GET",
-                path: "/stsubscribe",
+                path: "/stsubscribe/$hubId",
                 headers: [
                     HOST: host
                 ]], deviceNetworkId))   
@@ -260,7 +782,7 @@ def locationHandler(evt) {
             def d = getChildDevice(dni)
             def networkAddress = null
             if (!d) {
-            	log.debug "Device was null"
+            	log.debug "Did not find matching Device By Mac Address"
             	childDevices.each {
                 	log.debug "In Child Devices Loop"
                     if (it.getDeviceDataByName("mac")) {
@@ -287,15 +809,20 @@ def locationHandler(evt) {
                 	networkAddress = d.getDeviceDataByName("networkAddress")
             	else
                 	networkAddress = d.latestState('networkAddress').stringValue
-                log.trace "Host: $host - $networkAddress"
+                    
+                log.trace "Found child device ${d.displayName} with matching Mac Address: $host - $networkAddress"
                 
+                d.sendEvent(name:"networkAddress", value: host)
+                d.updateDataValue("networkAddress", host)
+                d.on()
+                
+                log.trace "Updated Data Value"
+            
                 if(host != networkAddress) {
                     log.debug "Device's port or ip changed for device $d..."
                     dstate.ip = ip
                     dstate.port = port
                     dstate.name = "Philips hue ($ip)"
-                    d.sendEvent(name:"networkAddress", value: host)
-                    d.updateDataValue("networkAddress", host)
             	} 
             }
 		}
@@ -351,7 +878,7 @@ def locationHandler(evt) {
                         
               		sendHubCommand(new physicalgraph.device.HubAction([
 						method: "GET",
-						path: "/stsubscribe",
+						path: "/stsubscribe/${hub.id}",
 						headers: [
 						HOST: bridge.value.networkAddress
 							]], deviceNetworkId))   
@@ -363,7 +890,10 @@ def locationHandler(evt) {
 		} else if(headerString?.contains("json")) {
             log.trace "description.xml response (application/json)"
 			def body = new groovy.json.JsonSlurper().parseText(parsedEvent.body)
-			if (body.success != null) {
+            if(body.subscribed != null){
+            	log.trace "Subscription Status: ${body.subscribed}"
+            }
+			else if (body.success != null) {
 				if (body.success[0] != null) {
 					if (body.success[0].username)
 						state.username = body.success[0].username
@@ -382,10 +912,8 @@ def locationHandler(evt) {
 				}
 			}
 		}
-	} else {
-		log.trace "NON-HUE EVENT $evt.description"
 	}
-}
+}*/
 
 def doDeviceSync(){
 	log.trace "Doing Hue Device Sync!"
@@ -403,12 +931,24 @@ def doDeviceSync(){
 //CHILD DEVICE METHODS
 /////////////////////////////////////
 
-def parse(childDevice, description) {
+def parse(description) {
 	def parsedEvent = parseLanMessage(description) 
+	def headerString = parsedEvent.headers.toString()
+       def bodyString = parsedEvent.body.toString()
+		log.trace "--------->>>>>> MESSAGE $headerString $bodyString"
+}
+
+
+
+def parse(childDevice, description) {	
+	def parsedEvent = parseLanMessage(description) 
+    
 	if (parsedEvent.headers && parsedEvent.body) {
 		def headerString = parsedEvent.headers.toString()
         def bodyString = parsedEvent.body.toString()
-		if (headerString?.contains("json")) { 
+		log.trace "--------->>>>>> MESSAGE $headerString $bodyString"
+    
+    if (headerString?.contains("json")) { 
         	def body
         	try {
             	body = new groovy.json.JsonSlurper().parseText(bodyString)
@@ -503,56 +1043,13 @@ def parse(childDevice, description) {
 }
 
 def on(childDevice) {
-	log.debug "Executing 'on'"
-	put("lights/${getId(childDevice)}/state", [on: true])
-    return "Bulb is On"
+
 }
 
 def off(childDevice) {
-	log.debug "Executing 'off'"
-	put("lights/${getId(childDevice)}/state", [on: false])
-    return "Bulb is Off"
+
 }
 
-def setLevel(childDevice, percent) {
-	log.debug "Executing 'setLevel'"
-    def level 
-    if (percent == 1) level = 1 else level = Math.min(Math.round(percent * 255 / 100), 255)
-	put("lights/${getId(childDevice)}/state", [bri: level, on: percent > 0])
-}
-
-def setSaturation(childDevice, percent) {
-	log.debug "Executing 'setSaturation($percent)'"
-	def level = Math.min(Math.round(percent * 255 / 100), 255)
-	put("lights/${getId(childDevice)}/state", [sat: level])
-}
-
-def setHue(childDevice, percent) {
-	log.debug "Executing 'setHue($percent)'"
-	def level =	Math.min(Math.round(percent * 65535 / 100), 65535)
-	put("lights/${getId(childDevice)}/state", [hue: level])
-}
-
-def setColor(childDevice, huesettings) {
-	log.debug "Executing 'setColor($huesettings)'"
-	def hue = Math.min(Math.round(huesettings.hue * 65535 / 100), 65535)
-	def sat = Math.min(Math.round(huesettings.saturation * 255 / 100), 255)
-    def alert = huesettings.alert ? huesettings.alert : "none"
-    def transition = huesettings.transition ? huesettings.transition : 4
-
-	def value = [sat: sat, hue: hue, alert: alert, transitiontime: transition]
-	if (huesettings.level != null) {
-        if (huesettings.level == 1) value.bri = 1 else value.bri = Math.min(Math.round(huesettings.level * 255 / 100), 255)
-		value.on = value.bri > 0
-	}
-
-	if (huesettings.switch) {
-		value.on = huesettings.switch == "on"
-	}
-
-	log.debug "sending command $value"
-	put("lights/${getId(childDevice)}/state", value)
-}
 
 def nextLevel(childDevice) {
 	def level = device.latestValue("level") as Integer ?: 0
@@ -639,33 +1136,70 @@ private Integer convertHexToInt(hex) {
 	Integer.parseInt(hex,16)
 }
 
-def convertBulbListToMap() {
-	try {
-		if (state.bulbs instanceof java.util.List) {
-			def map = [:]
-			state.bulbs.unique {it.id}.each { bulb ->
-				map << ["${bulb.id}":["id":bulb.id, "name":bulb.name, "hub":bulb.hub]]
-			}
-			state.bulbs = map
-		}
-	}
-	catch(Exception e) {
-		log.error "Caught error attempting to convert bulb list to map: $e"
-	}
-}
 
 private String convertHexToIP(hex) {
-	[convertHexToInt(hex[0..1]),convertHexToInt(hex[2..3]),convertHexToInt(hex[4..5]),convertHexToInt(hex[6..7])].join(".")
+	if(hex)
+		[convertHexToInt(hex[0..1]),convertHexToInt(hex[2..3]),convertHexToInt(hex[4..5]),convertHexToInt(hex[6..7])].join(".")
+    else
+    	return "IP - ? ? ? ?"
 }
 
-private Boolean canInstallLabs() {
-	return hasAllHubsOver("000.011.00603")
-}
 
 private Boolean hasAllHubsOver(String desiredFirmware) {
 	return realHubFirmwareVersions.every { fw -> fw >= desiredFirmware }
 }
 
-private List getRealHubFirmwareVersions() {
-	return location.hubs*.firmwareVersionString.findAll { it }
+private playAudio(){
+	sonos.playSoundAndTrack(state.sound.uri, state.sound.duration, state.selectedSong, volume)
+}
+
+
+
+private loadText() {
+	switch ( actionType) {
+		case "Bell 1":
+			state.sound = [uri: "http://s3.amazonaws.com/smartapp-media/sonos/bell1.mp3", duration: "10"]
+			break;
+		case "Bell 2":
+			state.sound = [uri: "http://s3.amazonaws.com/smartapp-media/sonos/bell2.mp3", duration: "10"]
+			break;
+		case "Dogs Barking":
+			state.sound = [uri: "http://s3.amazonaws.com/smartapp-media/sonos/dogs.mp3", duration: "10"]
+			break;
+		case "Fire Alarm":
+			state.sound = [uri: "http://s3.amazonaws.com/smartapp-media/sonos/alarm.mp3", duration: "17"]
+			break;
+		case "The mail has arrived":
+			state.sound = [uri: "http://s3.amazonaws.com/smartapp-media/sonos/the+mail+has+arrived.mp3", duration: "1"]
+			break;
+		case "A door opened":
+			state.sound = [uri: "http://s3.amazonaws.com/smartapp-media/sonos/a+door+opened.mp3", duration: "1"]
+			break;
+		case "There is motion":
+			state.sound = [uri: "http://s3.amazonaws.com/smartapp-media/sonos/there+is+motion.mp3", duration: "1"]
+			break;
+		case "Smartthings detected a flood":
+			state.sound = [uri: "http://s3.amazonaws.com/smartapp-media/sonos/smartthings+detected+a+flood.mp3", duration: "2"]
+			break;
+		case "Smartthings detected smoke":
+			state.sound = [uri: "http://s3.amazonaws.com/smartapp-media/sonos/smartthings+detected+smoke.mp3", duration: "1"]
+			break;
+		case "Someone is arriving":
+			state.sound = [uri: "http://s3.amazonaws.com/smartapp-media/sonos/someone+is+arriving.mp3", duration: "1"]
+			break;
+		case "Piano":
+			state.sound = [uri: "http://s3.amazonaws.com/smartapp-media/sonos/piano2.mp3", duration: "10"]
+			break;
+		case "Lightsaber":
+			state.sound = [uri: "http://s3.amazonaws.com/smartapp-media/sonos/lightsaber.mp3", duration: "10"]
+			break;
+		default:
+			if (message) {
+				state.sound = textToSpeech(message instanceof List ? message[0] : message) // not sure why this is (sometimes) needed)
+			}
+			else {
+				state.sound = textToSpeech("You selected the custom message option but did not enter a message in the $app.label Smart App")
+			}
+			break;
+	}
 }
